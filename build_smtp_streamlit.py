@@ -4,7 +4,7 @@ import sys
 import os
 import json
 import socket
-import dns.resolver
+
 
 from datetime import datetime
 
@@ -210,45 +210,30 @@ def get_domain(email: str):
     return email.split('@')[1].lower().strip()
 
 
-def check_dns(hostname: str):
-    try:
-        dns.resolver.resolve(hostname, 'A', lifetime=TIMEOUT)
-        return True
-    except Exception:
-        return False
-
-
-def get_mx_host(domain: str):
-    try:
-        answers = dns.resolver.resolve(domain, 'MX', lifetime=TIMEOUT)
-        mx_records = [(int(str(r).split()[0]), str(r).split()[1].rstrip('.')) for r in answers]
-        mx_records.sort(key=lambda x: x[0])
-        if mx_records:
-            return mx_records[0][1]
-    except Exception:
-        pass
-    return None
-
-
 def get_smtp_config(email: str):
     domain = get_domain(email)
 
     if domain in SMTP_DATABASE:
         return SMTP_DATABASE[domain].copy()
 
+    # DNS/MX discovery disabled. Only try common hostnames with port probing.
     smtp_host = f"smtp.{domain}"
-    if check_dns(smtp_host):
+    if check_port(smtp_host, 465):
         return {'host': smtp_host, 'port': 465, 'ssl': True}
 
+    alt_port = 587
+    if check_port(smtp_host, alt_port):
+        return {'host': smtp_host, 'port': alt_port, 'ssl': False}
+
     mail_host = f"mail.{domain}"
-    if check_dns(mail_host):
+    if check_port(mail_host, 465):
         return {'host': mail_host, 'port': 465, 'ssl': True}
 
-    mx_host = get_mx_host(domain)
-    if mx_host:
-        return {'host': mx_host, 'port': 465, 'ssl': True}
+    if check_port(mail_host, alt_port):
+        return {'host': mail_host, 'port': alt_port, 'ssl': False}
 
     return None
+
 
 
 def check_port(host: str, port: int):
@@ -284,6 +269,7 @@ def clean_credentials(email: str, password: str):
 
 
 def convert_credentials_to_smtp(credentials, do_validate=False, do_dns=False, output_format='plain', filter_weak=False):
+
     converted = []
     failed = []
     unique_domains = set()
